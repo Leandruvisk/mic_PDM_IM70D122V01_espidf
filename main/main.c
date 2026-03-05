@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <math.h>
 #include "driver/i2s_pdm.h"
 #include "esp_log.h"
 #include "driver/i2s_std.h"
@@ -11,37 +10,28 @@
 #define CLK_PIN  36
 
 /********** PARAMETRIZÁVEIS **********/
-#define SAMPLE_SIZE     2048       // tamanho do buffer
-#define SAMPLE_RATE     48000      // Hz
-#define FREQ_MIN        200        // Hz
-#define FREQ_MAX        400        // Hz
-#define DETECT_PERIOD_MS 200       // ms
-#define DETECT_THRESHOLD 50        // % mínimo de frames ativos
+#define SAMPLE_SIZE      1024       // tamanho do buffer
+#define SAMPLE_RATE      48000      // Hz
+#define FREQ_MIN         200        // Hz
+#define FREQ_MAX         400        // Hz
+#define DETECT_PERIOD_MS 200        // ms
+#define DETECT_THRESHOLD 50         // % mínimo de frames ativos
 /************************************/
 
-static const char *TAG = "PDM_DETECT";
+static const char *TAG = "PDM_ZC";
 
 // Buffer global
 static int16_t buf[SAMPLE_SIZE];
 
-// Função de detecção de frequência (simplificada)
-float detect_frequency(int16_t *buf, size_t len) {
-    float max_amp = 0;
-    int peak_bin = 0;
-    for (int bin = 0; bin < len / 2; bin++) {
-        float re = 0, im = 0;
-        for (int n = 0; n < len; n++) {
-            float angle = 2.0f * M_PI * bin * n / len;
-            re += buf[n] * cosf(angle);
-            im -= buf[n] * sinf(angle);
-        }
-        float mag = sqrtf(re*re + im*im);
-        if (mag > max_amp) {
-            max_amp = mag;
-            peak_bin = bin;
-        }
+// Calcula frequência aproximada por zero-crossing
+float detect_frequency_zc(int16_t *buf, size_t len) {
+    int crossings = 0;
+    for (int i = 1; i < len; i++) {
+        if ((buf[i-1] < 0 && buf[i] >= 0) || (buf[i-1] >= 0 && buf[i] < 0))
+            crossings++;
     }
-    return (float)peak_bin * SAMPLE_RATE / len;
+    float freq = ((float)crossings / 2.0f) * SAMPLE_RATE / len;
+    return freq;
 }
 
 // Task de detecção
@@ -56,7 +46,7 @@ void freq_detect_task(void *arg) {
     while (1) {
         if (i2s_channel_read(rx_handle, buf, sizeof(buf), &bytes_read, portMAX_DELAY) == ESP_OK) {
             if (bytes_read > 0) {
-                float freq = detect_frequency(buf, SAMPLE_SIZE);
+                float freq = detect_frequency_zc(buf, SAMPLE_SIZE);
 
                 if (freq >= FREQ_MIN && freq <= FREQ_MAX) {
                     active_frames++;
